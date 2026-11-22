@@ -1,0 +1,13 @@
+{
+  "name": "n8n-ai-order-intake",
+  "version": "1.0.0",
+  "private": true,
+  "description": "n8n workflow: e-mail orders -> Gemini JSON extraction -> JavaScript validation -> Google Sheets + e-mail reply",
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.js\"",
+    "build": "node scripts/build-workflow.js",
+    "eval": "node scripts/run-eval.js"
+  },
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}

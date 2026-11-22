@@ -1,0 +1,15 @@
+From: Anna Nowak <anna.nowak@example.com>
+Subject: Zamówienie - ElektroMax Sp. z o.o.
+
+Dzień dobry,
+
+w imieniu firmy ElektroMax Sp. z o.o. zamawiam:
+- kabel YDY 3x2,5 mm2, krążek 100 m - 4 szt.
+- gniazdo podwójne natynkowe IP44 - 30 szt.
+- wyłącznik nadprądowy B16 1P - 20 szt.
+
+Proszę o dostawę 12 stycznia 2027 r.
+
+Z poważaniem,
+Anna Nowak
+Dział zakupów ElektroMax

@@ -1,0 +1,6 @@
+From: Ewa Szymańska <ewa.szymanska@example.com>
+Subject: Zamówienie do sklepu
+
+Dzień dobry,
+dla sklepu Elektro-Ewa zamawiam 40 żarówek LED E27 10W barwa ciepła i 20 listew zasilających 5 gniazd z wyłącznikiem.
+Pozdrawiam, Ewa Szymańska

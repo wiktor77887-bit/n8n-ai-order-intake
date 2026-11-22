@@ -1,0 +1,14 @@
+From: John Miller <j.miller@nordic-builds.example.com>
+Subject: Purchase order - Nordic Builds
+
+Hello,
+
+Nordic Builds Ltd would like to order the following:
+- 12 x LED panel 60x60 40W
+- 50 x WAGO 221-413 connectors (pack of 50)
+- 8 x motion sensor 360 degrees
+
+Please deliver on 2027-02-08.
+
+Kind regards,
+John Miller

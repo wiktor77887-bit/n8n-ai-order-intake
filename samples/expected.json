@@ -1,0 +1,12 @@
+{
+  "01_ok_formal.txt":           { "status": "ok", "items": 3 },
+  "02_ok_casual.txt":           { "status": "ok", "items": 2 },
+  "03_ok_list.txt":             { "status": "ok", "items": 4 },
+  "04_ok_english.txt":          { "status": "ok", "items": 3 },
+  "05_ok_signature_email.txt":  { "status": "ok", "items": 2, "email": "zamowienia@elektroserwis-wojcik.example.com" },
+  "06_ok_one_line.txt":         { "status": "ok", "items": 1 },
+  "07_missing_quantity.txt":    { "status": "needs_review", "missing": "items[0].quantity" },
+  "08_missing_date.txt":        { "status": "needs_review", "missing": "delivery_date" },
+  "09_ok_typos.txt":            { "status": "ok", "items": 2 },
+  "10_not_an_order.txt":        { "status": "needs_review", "issue": "not_an_order" }
+}

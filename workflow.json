@@ -1,0 +1,520 @@
+{
+  "name": "AI Order Intake",
+  "nodes": [
+    {
+      "parameters": {
+        "postProcessAction": "read",
+        "format": "simple",
+        "options": {
+          "customEmailConfig": "[\"UNSEEN\"]"
+        }
+      },
+      "id": "a868c6fe-5953-42bb-ab4a-2505f3d597be",
+      "name": "Email Trigger (IMAP)",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "order",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "297e465e-ac80-47c5-ac3e-841671b972ce",
+      "name": "Webhook POST /order",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        220
+      ],
+      "webhookId": "12c6d32f-b778-4052-ac65-ecf616814f81"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Normalizacja wejścia: mail z IMAP albo JSON z webhooka -> jeden wspólny format.\n// Ten plik jest źródłem kodu węzła \"Normalize input\" (scripts/build-workflow.mjs wkleja go do workflow.json).\n\nconst GEMINI_MODEL = 'gemini-flash-latest'; // możesz przypiąć konkretną wersję, np. 'gemini-2.5-flash'\nconst MAX_TEXT_CHARS = 8000;\n\nconst ORDER_SCHEMA = {\n  type: 'OBJECT',\n  properties: {\n    is_order: { type: 'BOOLEAN', description: 'true if the message is a purchase order, false otherwise' },\n    language: { type: 'STRING', description: 'language of the message: \"pl\" or \"en\"' },\n    customer: { type: 'STRING', nullable: true, description: 'company or person placing the order' },\n    email: { type: 'STRING', nullable: true, description: 'contact e-mail written in the message body, if any' },\n    items: {\n      type: 'ARRAY',\n      items: {\n        type: 'OBJECT',\n        properties: {\n          product: { type: 'STRING' },\n          quantity: { type: 'INTEGER', nullable: true, description: 'null if the quantity is not stated' },\n        },\n        required: ['product', 'quantity'],\n      },\n    },\n    delivery_date: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD, null if not stated' },\n    notes: { type: 'STRING', nullable: true },\n    missing_fields: { type: 'ARRAY', items: { type: 'STRING' } },\n  },\n  required: ['is_order', 'language', 'customer', 'email', 'items', 'delivery_date', 'notes', 'missing_fields'],\n};\n\nfunction parseFrom(from) {\n  // \"Jan Kowalski <jan@firma.pl>\" | \"jan@firma.pl\" | {value:[{address,name}]}\n  if (from && typeof from === 'object' && Array.isArray(from.value) && from.value[0]) {\n    return { email: from.value[0].address || '', name: from.value[0].name || '' };\n  }\n  const s = String(from || '').trim();\n  const m = s.match(/^\\s*\"?([^\"<]*?)\"?\\s*<([^>]+)>\\s*$/);\n  if (m) return { name: m[1].trim(), email: m[2].trim() };\n  return { name: '', email: s };\n}\n\nfunction stripHtml(html) {\n  return String(html || '')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/<br\\s*\\/?>/gi, '\\n')\n    .replace(/<\\/p>/gi, '\\n')\n    .replace(/<[^>]+>/g, '')\n    .replace(/&nbsp;/g, ' ')\n    .trim();\n}\n\nfunction buildPrompt(subject, text, today) {\n  return [\n    'You extract purchase orders from customer e-mails for a B2B wholesaler.',\n    `Today is ${today} (Europe/Warsaw). Resolve relative dates (\"next Friday\", \"jutro\", \"za tydzień\") to YYYY-MM-DD.`,\n    'Rules:',\n    '- Use only information present in the message. Never invent products, quantities, dates or e-mails.',\n    '- If a value is not stated, return null and add the field name to missing_fields',\n    '  (use \"customer\", \"email\", \"delivery_date\", \"items\", or \"items[N].quantity\" with 0-based N).',\n    '- Fix obvious typos in product names, keep the product description otherwise as written.',\n    '- quantity must be a whole number of units/packs as written by the customer.',\n    '- If the message is a question or anything other than an order, set is_order=false and items=[].',\n    '- language: \"pl\" for Polish, \"en\" for English.',\n    '',\n    `Subject: ${subject}`,\n    'Message:',\n    '\"\"\"',\n    text,\n    '\"\"\"',\n  ].join('\\n');\n}\n\nfunction normalizeInput(raw, today) {\n  let source, sender, subject, text, dryRun = false;\n\n  if (raw && raw.body && typeof raw.body === 'object' && raw.headers) {\n    // Webhook: { headers, params, query, body: { name, email, subject, text, dry_run } }\n    const b = raw.body;\n    source = 'webhook';\n    sender = { name: String(b.name || '').trim(), email: String(b.email || '').trim() };\n    subject = String(b.subject || '');\n    text = String(b.text || b.message || '');\n    dryRun = b.dry_run === true;\n  } else {\n    // Email Trigger (IMAP), format \"simple\"\n    source = 'email';\n    sender = parseFrom(raw.from);\n    subject = String(raw.subject || '');\n    text = String(raw.textPlain || raw.text || '') || stripHtml(raw.textHtml || raw.html);\n  }\n\n  text = text.slice(0, MAX_TEXT_CHARS);\n\n  return {\n    source,\n    dry_run: dryRun,\n    received_at: new Date().toISOString(),\n    today,\n    sender_name: sender.name,\n    sender_email: sender.email,\n    subject,\n    text,\n    model: GEMINI_MODEL,\n    gemini_request: {\n      contents: [{ role: 'user', parts: [{ text: buildPrompt(subject, text, today) }] }],\n      generationConfig: {\n        temperature: 0,\n        responseMimeType: 'application/json',\n        responseSchema: ORDER_SCHEMA,\n      },\n    },\n  };\n}\n\n// --- n8n ---\nconst today = $now.setZone('Europe/Warsaw').toFormat('yyyy-MM-dd');\nreturn { json: normalizeInput($json, today) };\n"
+      },
+      "id": "b2301f12-fd87-4a87-aaef-c81876656c43",
+      "name": "Normalize input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        110
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $json.model }}:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.gemini_request) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "1236dc0c-adb3-48ac-a48f-e8edd889808a",
+      "name": "Gemini: extract order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        110
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Parsowanie odpowiedzi LLM i walidacja zamówienia.\n// Ten plik jest źródłem kodu węzła \"Validate order\" (scripts/build-workflow.mjs wkleja go do workflow.json).\n// Zasada: niezależnie od tego, co zwróci LLM, ta funkcja nigdy nie rzuca wyjątku.\n// W najgorszym razie zwraca status \"needs_review\".\n\nconst EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/;\n// Adresy automatyczne: na nie nie odpowiadamy (unikamy pętli i maili do no-reply).\nconst NO_REPLY_RE = /(no-?reply|do-?not-?reply|mailer-daemon|postmaster|notifications?@)/i;\n\nfunction extractLlmText(llm) {\n  if (!llm || typeof llm !== 'object') return { error: 'llm_empty_response' };\n  if (llm.error) return { error: 'llm_request_failed' };\n  const parts = llm.candidates && llm.candidates[0] && llm.candidates[0].content && llm.candidates[0].content.parts;\n  if (!Array.isArray(parts)) return { error: 'llm_empty_response' };\n  const text = parts.filter((p) => p && !p.thought && typeof p.text === 'string').map((p) => p.text).join('');\n  return text.trim() ? { text } : { error: 'llm_empty_response' };\n}\n\nfunction parseLlmJson(text) {\n  const cleaned = String(text).trim().replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```$/, '');\n  try {\n    const obj = JSON.parse(cleaned);\n    return obj && typeof obj === 'object' && !Array.isArray(obj) ? { obj } : { error: 'llm_invalid_json' };\n  } catch (e) {\n    return { error: 'llm_invalid_json' };\n  }\n}\n\nfunction isValidIsoDate(s) {\n  if (typeof s !== 'string' || !/^\\d{4}-\\d{2}-\\d{2}$/.test(s)) return false;\n  const [y, m, d] = s.split('-').map(Number);\n  const dt = new Date(Date.UTC(y, m - 1, d));\n  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d;\n}\n\nconst str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);\n\nfunction validateOrder(input, llmResponse) {\n  const issues = [];\n  const missing = new Set();\n\n  let data = {};\n  const extracted = extractLlmText(llmResponse);\n  if (extracted.error) {\n    issues.push(extracted.error);\n  } else {\n    const parsed = parseLlmJson(extracted.text);\n    if (parsed.error) issues.push(parsed.error);\n    else data = parsed.obj;\n  }\n  const llmOk = issues.length === 0;\n\n  const language = data.language === 'en' ? 'en' : 'pl';\n  const isOrder = llmOk ? data.is_order !== false : null;\n\n  // Dane kontaktowe: z treści maila, a jeśli ich brak, to z nadawcy.\n  const customer = str(data.customer) || str(input.sender_name);\n  const email = str(data.email) || str(input.sender_email);\n\n  // Pozycje zamówienia\n  const items = [];\n  if (Array.isArray(data.items)) {\n    data.items.forEach((it, i) => {\n      const product = it && str(it.product);\n      const q = it ? it.quantity : null;\n      if (!product) issues.push(`items[${i}].product_empty`);\n      if (q === null || q === undefined || q === '') missing.add(`items[${i}].quantity`);\n      else if (!Number.isInteger(q) || q <= 0) issues.push(`items[${i}].quantity_not_positive_integer`);\n      items.push({ product: product || '', quantity: Number.isInteger(q) ? q : null });\n    });\n  } else if (llmOk) {\n    issues.push('items_not_array');\n  }\n\n  if (llmOk && isOrder) {\n    if (items.length === 0) missing.add('items');\n    if (!customer) missing.add('customer');\n\n    if (!email) missing.add('email');\n    else if (!EMAIL_RE.test(email)) issues.push('email_invalid_format');\n\n    const dd = data.delivery_date;\n    if (dd === null || dd === undefined || dd === '') missing.add('delivery_date');\n    else if (!isValidIsoDate(dd)) issues.push('delivery_date_invalid');\n    else if (dd < input.today) issues.push('delivery_date_in_past');\n\n    // Pola, które LLM sam oznaczył jako brakujące (o ile faktycznie ich nie uzupełniliśmy)\n    if (Array.isArray(data.missing_fields)) {\n      for (const f of data.missing_fields) {\n        if (typeof f !== 'string') continue;\n        if (f === 'customer' && customer) continue;\n        if (f === 'email' && email) continue;\n        if (f === 'delivery_date' && isValidIsoDate(dd)) continue;\n        if (/^items\\[\\d+\\]\\.quantity$/.test(f)) {\n          const idx = Number(f.match(/\\d+/)[0]);\n          if (items[idx] && items[idx].quantity) continue;\n        }\n        if (f === 'items' && items.length) continue;\n        missing.add(f);\n      }\n    }\n  }\n\n  if (llmOk && isOrder === false) issues.push('not_an_order');\n\n  const missingFields = [...missing];\n  const status = llmOk && isOrder && issues.length === 0 && missingFields.length === 0 ? 'ok' : 'needs_review';\n\n  const order = {\n    customer,\n    email,\n    items,\n    delivery_date: isValidIsoDate(data.delivery_date) ? data.delivery_date : null,\n    notes: str(data.notes),\n  };\n\n  const reply = buildReply({ status, language, order, missingFields, issues, isOrder });\n\n  return {\n    status,\n    issues,\n    missing_fields: missingFields,\n    is_order: isOrder,\n    language,\n    order,\n    source: input.source,\n    dry_run: input.dry_run === true,\n    received_at: input.received_at,\n    subject: input.subject,\n    reply_to: [str(input.sender_email), EMAIL_RE.test(email || '') ? email : null].find((a) => a && !NO_REPLY_RE.test(a)) || null,\n    reply_subject: reply.subject,\n    reply_body: reply.body,\n    api_response: { status, issues, missing_fields: missingFields, order },\n  };\n}\n\nconst FIELD_LABELS = {\n  pl: { customer: 'nazwa firmy lub osoby zamawiającej', email: 'adres e-mail do kontaktu', delivery_date: 'data dostawy', items: 'lista produktów' },\n  en: { customer: 'company or person placing the order', email: 'contact e-mail address', delivery_date: 'delivery date', items: 'list of products' },\n};\n\nfunction describeMissing(field, lang, items) {\n  const m = field.match(/^items\\[(\\d+)\\]\\.quantity$/);\n  if (m) {\n    const p = items[Number(m[1])];\n    const name = p && p.product ? `\"${p.product}\"` : `#${Number(m[1]) + 1}`;\n    return lang === 'en' ? `quantity of ${name}` : `ilość dla pozycji ${name}`;\n  }\n  return FIELD_LABELS[lang][field] || field;\n}\n\nfunction describeIssue(issue, lang) {\n  const pl = {\n    delivery_date_in_past: 'podana data dostawy już minęła',\n    delivery_date_invalid: 'data dostawy ma niepoprawny format',\n    email_invalid_format: 'adres e-mail ma niepoprawny format',\n  };\n  const en = {\n    delivery_date_in_past: 'the requested delivery date is in the past',\n    delivery_date_invalid: 'the delivery date is not a valid date',\n    email_invalid_format: 'the e-mail address is not valid',\n  };\n  if (/quantity_not_positive_integer/.test(issue)) return lang === 'en' ? 'one of the quantities is not a whole positive number' : 'jedna z ilości nie jest dodatnią liczbą całkowitą';\n  return (lang === 'en' ? en : pl)[issue] || null;\n}\n\nfunction buildReply({ status, language: lang, order, missingFields, issues, isOrder }) {\n  const lines = order.items.map((it) => `- ${it.product}: ${it.quantity ?? '?'}`).join('\\n');\n\n  if (status === 'ok') {\n    return lang === 'en'\n      ? { subject: 'Order confirmation', body: `Hello,\\n\\nthank you for your order. We have registered:\\n${lines}\\n\\nRequested delivery date: ${order.delivery_date}\\n\\nBest regards,\\nSales team` }\n      : { subject: 'Potwierdzenie zamówienia', body: `Dzień dobry,\\n\\ndziękujemy za zamówienie. Zarejestrowaliśmy:\\n${lines}\\n\\nTermin dostawy: ${order.delivery_date}\\n\\nPozdrawiamy,\\nDział sprzedaży` };\n  }\n\n  if (isOrder === false) {\n    return lang === 'en'\n      ? { subject: 'We received your message', body: 'Hello,\\n\\nthank you for your message. It does not look like an order, so we have passed it on to our sales team, who will get back to you.\\n\\nBest regards,\\nSales team' }\n      : { subject: 'Otrzymaliśmy Twoją wiadomość', body: 'Dzień dobry,\\n\\ndziękujemy za wiadomość. Nie wygląda ona na zamówienie, dlatego przekazaliśmy ją do działu sprzedaży, który odpowie najszybciej, jak to możliwe.\\n\\nPozdrawiamy,\\nDział sprzedaży' };\n  }\n\n  const problems = [\n    ...missingFields.map((f) => describeMissing(f, lang, order.items)),\n    ...issues.map((i) => describeIssue(i, lang)).filter(Boolean),\n  ];\n\n  if (problems.length === 0) {\n    // Błąd techniczny po naszej stronie (np. LLM nie odpowiedział): nie obciążamy klienta.\n    return lang === 'en'\n      ? { subject: 'Your order is being processed', body: 'Hello,\\n\\nwe have received your order. A member of our team will review it and confirm shortly.\\n\\nBest regards,\\nSales team' }\n      : { subject: 'Zamówienie w trakcie weryfikacji', body: 'Dzień dobry,\\n\\notrzymaliśmy zamówienie. Nasz pracownik je sprawdzi i wkrótce potwierdzi.\\n\\nPozdrawiamy,\\nDział sprzedaży' };\n  }\n\n  const list = problems.map((p) => `- ${p}`).join('\\n');\n  return lang === 'en'\n    ? { subject: 'We need a few more details for your order', body: `Hello,\\n\\nthank you for your order. To process it, we need the following:\\n${list}\\n\\nWhat we have so far:\\n${lines || '- (no products recognised)'}\\n\\nPlease reply to this e-mail with the missing details.\\n\\nBest regards,\\nSales team` }\n    : { subject: 'Prosimy o uzupełnienie zamówienia', body: `Dzień dobry,\\n\\ndziękujemy za zamówienie. Żeby je zrealizować, potrzebujemy jeszcze:\\n${list}\\n\\nTo, co już mamy:\\n${lines || '- (nie rozpoznaliśmy produktów)'}\\n\\nProsimy o odpowiedź na tego maila z brakującymi danymi.\\n\\nPozdrawiamy,\\nDział sprzedaży` };\n}\n\n// --- n8n ---\n// $json to odpowiedź z Gemini (albo obiekt { error } gdy HTTP Request się nie powiódł).\nconst input = $('Normalize input').item.json;\nreturn { json: validateOrder(input, $json) };\n"
+      },
+      "id": "b175e077-b62f-4cd8-a760-41f318fa3fc3",
+      "name": "Validate order",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        110
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ddf886d6-eb77-400e-ab36-cc56cb25ffc7",
+              "name": "received_at",
+              "value": "={{ $json.received_at }}",
+              "type": "string"
+            },
+            {
+              "id": "958289fc-d6dc-4ea9-a6a6-68823767238f",
+              "name": "source",
+              "value": "={{ $json.source }}",
+              "type": "string"
+            },
+            {
+              "id": "124d20bb-3dc9-4c84-a037-3679c2503449",
+              "name": "status",
+              "value": "={{ $json.status }}",
+              "type": "string"
+            },
+            {
+              "id": "becaba85-9697-46cc-a263-dd87c10c6f4f",
+              "name": "customer",
+              "value": "={{ $json.order.customer }}",
+              "type": "string"
+            },
+            {
+              "id": "69240c3e-6ea3-48f9-a069-b17472a41add",
+              "name": "email",
+              "value": "={{ $json.order.email }}",
+              "type": "string"
+            },
+            {
+              "id": "167ce2d0-7c2a-4c5b-aede-8860b8b402b3",
+              "name": "items",
+              "value": "={{ $json.order.items.map(i => i.product + ' x ' + (i.quantity ?? '?')).join('; ') }}",
+              "type": "string"
+            },
+            {
+              "id": "f2dd4b8c-b103-47f7-a94a-5b6245f4f55f",
+              "name": "delivery_date",
+              "value": "={{ $json.order.delivery_date }}",
+              "type": "string"
+            },
+            {
+              "id": "046f4d88-d4fa-4c87-a0c9-f31fe51397ae",
+              "name": "notes",
+              "value": "={{ $json.order.notes }}",
+              "type": "string"
+            },
+            {
+              "id": "11a8cc30-7bef-4151-ad15-55d08d15d50d",
+              "name": "missing_fields",
+              "value": "={{ $json.missing_fields.join(', ') }}",
+              "type": "string"
+            },
+            {
+              "id": "e8ab31da-78d6-4054-a543-d633f3ccc030",
+              "name": "issues",
+              "value": "={{ $json.issues.join(', ') }}",
+              "type": "string"
+            },
+            {
+              "id": "fd07c694-0fe9-486b-ac07-b0a062fff814",
+              "name": "subject",
+              "value": "={{ $json.subject }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "01fc724c-3c0f-49b1-a0ab-90fb2aea68ad",
+      "name": "Sheet row",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1040,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "634bd0b3-95de-4099-ac0c-b6367b46fc5d",
+      "name": "Google Sheets: append",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1300,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "46ecbbaf-c5a9-4f3e-a6e4-3972accad588",
+              "leftValue": "={{ $json.reply_to }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "f574463f-1a27-4756-a937-aa2c5b97825a",
+              "leftValue": "={{ $json.dry_run }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "false",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3a90c846-6b9f-4cb7-ad4a-00fb60908070",
+      "name": "Send reply?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        110
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "b11b4d94-1da5-4e8f-a521-fb81d806d514",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "c3f546d8-4036-4598-a703-5066a4f31e5c",
+      "name": "Status = ok?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        110
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "TWOJA.SKRZYNKA.TESTOWA@gmail.com",
+        "toEmail": "={{ $json.reply_to }}",
+        "subject": "={{ $json.reply_subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.reply_body }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "b1ddb3e5-8635-44ea-a08a-5a4eed5e274d",
+      "name": "Email: confirmation",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1560,
+        20
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fromEmail": "TWOJA.SKRZYNKA.TESTOWA@gmail.com",
+        "toEmail": "={{ $json.reply_to }}",
+        "subject": "={{ $json.reply_subject }}",
+        "emailFormat": "text",
+        "text": "={{ $json.reply_body }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "3938f813-137b-4639-abc7-a2cbd89f74e7",
+      "name": "Email: ask for missing data",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1560,
+        200
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "887c4e67-8eb6-4523-a226-b8df16593f5e",
+              "leftValue": "={{ $json.source }}",
+              "rightValue": "webhook",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f7548425-9d02-4bd0-a9e9-7152b085cc38",
+      "name": "From webhook?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json.api_response) }}",
+        "options": {}
+      },
+      "id": "89b74b18-4535-4307-aa34-3d26b7aeace0",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1300,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## AI Order Intake\nMail albo POST /order → Gemini wyciąga dane do JSON → JavaScript sprawdza poprawność → arkusz + odpowiedź do klienta.\n\nStatus **ok** = potwierdzenie, **needs_review** = prośba o brakujące dane.",
+        "height": 200,
+        "width": 520
+      },
+      "id": "a239f57e-feda-4e6b-a606-8318c0e37591",
+      "name": "Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -260
+      ]
+    }
+  ],
+  "connections": {
+    "Email Trigger (IMAP)": {
+      "main": [
+        [
+          {
+            "node": "Normalize input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook POST /order": {
+      "main": [
+        [
+          {
+            "node": "Normalize input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize input": {
+      "main": [
+        [
+          {
+            "node": "Gemini: extract order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini: extract order": {
+      "main": [
+        [
+          {
+            "node": "Validate order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate order": {
+      "main": [
+        [
+          {
+            "node": "Sheet row",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send reply?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "From webhook?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheet row": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets: append",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send reply?": {
+      "main": [
+        [
+          {
+            "node": "Status = ok?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Status = ok?": {
+      "main": [
+        [
+          {
+            "node": "Email: confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Email: ask for missing data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "From webhook?": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Warsaw"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

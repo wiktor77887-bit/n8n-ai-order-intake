@@ -1,0 +1,11 @@
+From: Katarzyna Wójcik <k.wojcik.prywatny@example.com>
+Subject: zamówienie dla firmy
+
+Dzień dobry,
+piszę z prywatnej skrzynki, ale zamówienie jest dla firmy Elektro-Serwis Wójcik.
+Potrzebujemy 15 sztuk lamp hermetycznych LED 120 cm oraz 2 sztuki przedłużaczy bębnowych 50 m.
+Dostawa 3 lutego 2027, najlepiej po godzinie 14.
+
+Proszę o kontakt na adres firmowy: zamowienia@elektroserwis-wojcik.example.com
+
+Katarzyna Wójcik
