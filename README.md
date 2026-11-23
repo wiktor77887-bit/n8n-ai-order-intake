@@ -80,11 +80,22 @@ Możliwe wartości w `issues`: `not_an_order`, `delivery_date_in_past`, `deliver
 
 10 przykładowych maili w `samples/` (6 poprawnych, w tym jeden po angielsku, 2 bez ilości lub daty, 1 z literówkami, 1 niebędący zamówieniem). Oczekiwane wyniki są w `samples/expected.json`, a skrypt `npm run eval` wysyła wszystkie maile na webhook i porównuje wyniki.
 
-<!-- Wklej tutaj zawartość results/eval-results.md po uruchomieniu npm run eval -->
+Wynik: **10/10** przypadków zgodnych z oczekiwaniami (2026-11-23).
 
 | Mail | Oczekiwany status | Otrzymany status | Pozycji | Braki / problemy | Wynik |
 |---|---|---|---|---|---|
-| … | | | | | |
+| 01_ok_formal.txt | ok | ok | 3 | - | ✅ |
+| 02_ok_casual.txt | ok | ok | 2 | - | ✅ |
+| 03_ok_list.txt | ok | ok | 4 | - | ✅ |
+| 04_ok_english.txt | ok | ok | 3 | - | ✅ |
+| 05_ok_signature_email.txt | ok | ok | 2 | - | ✅ |
+| 06_ok_one_line.txt | ok | ok | 1 | - | ✅ |
+| 07_missing_quantity.txt | needs_review | needs_review | 2 | items[0].quantity | ✅ |
+| 08_missing_date.txt | needs_review | needs_review | 2 | delivery_date | ✅ |
+| 09_ok_typos.txt | ok | ok | 2 | - | ✅ |
+| 10_not_an_order.txt | needs_review | needs_review | 0 | not_an_order | ✅ |
+
+W pierwszym przebiegu (9/10) jedno zapytanie do Gemini (`02_ok_casual.txt`, data względna „na przyszły piątek”) przekroczyło limit 30 s. Workflow nie przerwał działania: trzy razy ponowił próbę, a potem oznaczył zamówienie statusem `needs_review` z powodem `llm_request_failed`. Po tym limit czasu w węźle HTTP Request został podniesiony do 60 s.
 
 Do tego 15 testów jednostkowych walidacji (`npm test`), w tym: brak odpowiedzi na adresy no-reply, zepsuty JSON z modelu, odpowiedź w bloku Markdown, błąd HTTP, data 30 lutego, ilość ujemna i ułamkowa.
 

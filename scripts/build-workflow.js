@@ -59,7 +59,7 @@ const nodes = [
     sendBody: true,
     specifyBody: 'json',
     jsonBody: '={{ JSON.stringify($json.gemini_request) }}',
-    options: { timeout: 30000 },
+    options: { timeout: 60000 },
   }, { retryOnFail: true, maxTries: 3, waitBetweenTries: 3000, onError: 'continueRegularOutput' }),
   node('Validate order', 'n8n-nodes-base.code', 2, [780, 110], { mode: 'runOnceForEachItem', jsCode: validateCode }),
 

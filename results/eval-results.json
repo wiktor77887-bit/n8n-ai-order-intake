@@ -1,0 +1,102 @@
+[
+  {
+    "file": "01_ok_formal.txt",
+    "expected": "ok",
+    "got": "ok",
+    "items": 3,
+    "details": "-",
+    "pass": true,
+    "problems": [],
+    "ms": 10807
+  },
+  {
+    "file": "02_ok_casual.txt",
+    "expected": "ok",
+    "got": "ok",
+    "items": 2,
+    "details": "-",
+    "pass": true,
+    "problems": [],
+    "ms": 20480
+  },
+  {
+    "file": "03_ok_list.txt",
+    "expected": "ok",
+    "got": "ok",
+    "items": 4,
+    "details": "-",
+    "pass": true,
+    "problems": [],
+    "ms": 10148
+  },
+  {
+    "file": "04_ok_english.txt",
+    "expected": "ok",
+    "got": "ok",
+    "items": 3,
+    "details": "-",
+    "pass": true,
+    "problems": [],
+    "ms": 8985
+  },
+  {
+    "file": "05_ok_signature_email.txt",
+    "expected": "ok",
+    "got": "ok",
+    "items": 2,
+    "details": "-",
+    "pass": true,
+    "problems": [],
+    "ms": 10772
+  },
+  {
+    "file": "06_ok_one_line.txt",
+    "expected": "ok",
+    "got": "ok",
+    "items": 1,
+    "details": "-",
+    "pass": true,
+    "problems": [],
+    "ms": 9087
+  },
+  {
+    "file": "07_missing_quantity.txt",
+    "expected": "needs_review",
+    "got": "needs_review",
+    "items": 2,
+    "details": "items[0].quantity",
+    "pass": true,
+    "problems": [],
+    "ms": 11600
+  },
+  {
+    "file": "08_missing_date.txt",
+    "expected": "needs_review",
+    "got": "needs_review",
+    "items": 2,
+    "details": "delivery_date",
+    "pass": true,
+    "problems": [],
+    "ms": 8753
+  },
+  {
+    "file": "09_ok_typos.txt",
+    "expected": "ok",
+    "got": "ok",
+    "items": 2,
+    "details": "-",
+    "pass": true,
+    "problems": [],
+    "ms": 18971
+  },
+  {
+    "file": "10_not_an_order.txt",
+    "expected": "needs_review",
+    "got": "needs_review",
+    "items": 0,
+    "details": "not_an_order",
+    "pass": true,
+    "problems": [],
+    "ms": 8920
+  }
+]
