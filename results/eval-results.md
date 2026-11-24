@@ -1,6 +1,6 @@
-Wynik: **10/10** przypadków zgodnych z oczekiwaniami (2026-11-23).
+Result: **10/10** cases matched expectations (2026-11-23).
 
-| Mail | Oczekiwany status | Otrzymany status | Pozycji | Braki / problemy | Wynik |
+| E-mail | Expected status | Actual status | Items | Missing / issues | Result |
 |---|---|---|---|---|---|
 | 01_ok_formal.txt | ok | ok | 3 | - | ✅ |
 | 02_ok_casual.txt | ok | ok | 2 | - | ✅ |

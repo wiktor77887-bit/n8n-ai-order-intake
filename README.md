@@ -1,55 +1,56 @@
 # AI Order Intake (n8n + Gemini)
 
-**Automatyczne przyjmowanie zamówień z maili.** Klient pisze zamówienie zwykłym tekstem, tak jak pisze do handlowca. System sam je odczytuje, wpisuje do arkusza i odpowiada klientowi w ciągu kilkunastu sekund.
+**Automated order intake from e-mail.** Customers write their orders in plain text, the same way they would write to a sales rep. The system reads each order, adds it to a spreadsheet and replies to the customer within seconds.
 
-## Co to robi dla firmy
+## What it does for the business
 
-- **Handlowiec nie przepisuje maili do arkusza.** Produkty, ilości, termin dostawy i dane klienta trafiają do Google Sheets automatycznie.
-- **Klient od razu dostaje potwierdzenie** z listą tego, co zamówił, i terminem dostawy.
-- **Niekompletne zamówienia nie giną.** Jeśli brakuje ilości albo daty, system dopisuje zamówienie ze statusem „do weryfikacji” i sam prosi klienta o brakujące dane, wymieniając, czego dokładnie brakuje.
-- **Pytania, które nie są zamówieniami** (np. „czy macie to na stanie?”), są oznaczane osobno i przekazywane do działu sprzedaży, a nie wpisywane jako zamówienie.
-- **System nie zgaduje.** Sztuczna inteligencja tylko odczytuje tekst, a każdy wynik sprawdza zwykły program: czy ilości są liczbami, czy data nie minęła, czy e-mail jest poprawny. Wątpliwe przypadki zawsze trafiają do człowieka.
-- Zamówienia można też wysyłać **z innego systemu** (sklep internetowy, formularz) przez adres API.
+- **No more copying e-mails into spreadsheets.** Products, quantities, delivery dates and customer details go straight into Google Sheets.
+- **Customers get an instant confirmation** listing what they ordered and when it will be delivered.
+- **Incomplete orders don't get lost.** If a quantity or date is missing, the order is saved with the status "needs review", and the customer automatically gets an e-mail saying exactly what information is missing.
+- **Messages that aren't orders** (e.g. "do you have this in stock?") are flagged separately and passed to the sales team instead of being recorded as orders.
+- **The system doesn't guess.** The AI only reads the text. Every result is then checked by regular code: are the quantities whole numbers, is the date in the future, is the e-mail address valid? Anything uncertain goes to a person.
+- Orders can also come **from other systems** (an online shop, a web form) through an API endpoint.
+- Works with **Polish and English** e-mails and replies in the customer's language.
 
-**Przykład:** klient pisze „wrzućcie mi 10 opakowań puszek fi60 i 5 rolek taśmy na przyszły piątek”. W arkuszu pojawia się wiersz z dwiema pozycjami i konkretną datą, a klient dostaje maila z potwierdzeniem.
+**Example:** a customer writes *"wrzućcie mi 10 opakowań puszek fi60 i 5 rolek taśmy na przyszły piątek"* ("send me 10 packs of fi60 junction boxes and 5 rolls of tape for next Friday"). A row with two items and an exact date appears in the sheet, and the customer receives a confirmation e-mail.
 
-![Workflow w n8n](docs/workflow.png)
+![Workflow in n8n](docs/workflow.png)
 
 ---
 
-## Jak to działa
+## How it works
 
 ```mermaid
 flowchart LR
-    A[Mail na skrzynkę<br/>Email Trigger IMAP] --> N[Normalize input<br/>JavaScript]
+    A[Incoming e-mail<br/>Email Trigger IMAP] --> N[Normalize input<br/>JavaScript]
     B[POST /order<br/>Webhook] --> N
-    N --> G[Gemini API<br/>HTTP Request<br/>odpowiedź w JSON]
+    N --> G[Gemini API<br/>HTTP Request<br/>JSON response]
     G --> V[Validate order<br/>JavaScript]
-    V --> S[Google Sheets<br/>dopisz wiersz ze statusem]
-    V --> R{Wysłać odpowiedź?}
+    V --> S[Google Sheets<br/>append row with status]
+    V --> R{Send reply?}
     R --> O{status = ok?}
-    O -- tak --> C[Mail: potwierdzenie]
-    O -- nie --> M[Mail: prośba o brakujące dane]
-    V --> W{Z webhooka?}
-    W -- tak --> RW[Odpowiedź API w JSON]
+    O -- yes --> C[E-mail: confirmation]
+    O -- no --> M[E-mail: ask for missing data]
+    V --> W{From webhook?}
+    W -- yes --> RW[JSON API response]
 ```
 
-| Węzeł | Co robi |
+| Node | What it does |
 |---|---|
-| **Email Trigger (IMAP)** | Co chwilę sprawdza skrzynkę i pobiera nowe, nieprzeczytane maile. |
-| **Webhook POST /order** | Przyjmuje zamówienie przez REST API: `{ "name", "email", "subject", "text" }`. |
-| **Normalize input** (Code) | Sprowadza mail i zapytanie API do jednego formatu, wyciąga adres nadawcy, buduje prompt i schemat JSON dla modelu. |
-| **Gemini: extract order** (HTTP Request) | Wywołuje REST API Gemini (`generateContent`) z `responseMimeType: application/json` i `responseSchema`, więc model musi zwrócić JSON w ustalonym kształcie. Klucz API jest w Credential typu Header Auth (`x-goog-api-key`), a nie w treści węzła. Przy błędzie ponawia próbę 3 razy, potem przepuszcza błąd dalej zamiast zatrzymywać workflow. |
-| **Validate order** (Code) | Parsuje odpowiedź modelu i sprawdza dane: ilości to dodatnie liczby całkowite, data jest prawdziwą datą i nie wypada w przeszłości, e-mail ma poprawny format, lista produktów nie jest pusta. Ustala status `ok` albo `needs_review` i przygotowuje treść odpowiedzi (PL lub EN, zależnie od języka maila). Nigdy nie rzuca wyjątku: zepsuty JSON, pusta odpowiedź czy błąd HTTP kończą się statusem `needs_review`. |
-| **Sheet row** + **Google Sheets: append** | Wybiera kolumny i dopisuje wiersz do arkusza, także dla zamówień do weryfikacji. |
-| **Send reply?** | Pomija wysyłkę, gdy nie ma adresu zwrotnego albo gdy zapytanie ma `dry_run: true` (tryb testowy). |
-| **Status = ok?** | Kieruje do maila z potwierdzeniem albo do maila z prośbą o brakujące dane. |
-| **Email: confirmation / ask for missing data** | Wysyłają odpowiedź przez SMTP Gmaila. |
-| **From webhook?** + **Respond to Webhook** | Gdy zamówienie przyszło przez API, zwraca wynik w JSON. |
+| **Email Trigger (IMAP)** | Watches the inbox and picks up new, unread e-mails. |
+| **Webhook POST /order** | Accepts orders over a REST API: `{ "name", "email", "subject", "text" }`. |
+| **Normalize input** (Code) | Converts e-mails and API requests into one common format, extracts the sender's address, and builds the prompt and JSON schema for the model. |
+| **Gemini: extract order** (HTTP Request) | Calls the Gemini REST API (`generateContent`) with `responseMimeType: application/json` and a `responseSchema`, so the model must return JSON in a fixed shape. The API key is stored in a Header Auth credential (`x-goog-api-key`), not in the node itself. On failure it retries 3 times, then passes the error on instead of stopping the workflow. |
+| **Validate order** (Code) | Parses the model's response and checks the data: quantities are positive integers, the date is a real date and not in the past, the e-mail address is valid, and the item list isn't empty. Sets the status to `ok` or `needs_review` and builds the reply (in Polish or English, matching the e-mail). It never throws: broken JSON, an empty response or an HTTP error all end in `needs_review`. Never replies to automated addresses such as `no-reply@…`. |
+| **Sheet row** + **Google Sheets: append** | Selects the columns and appends a row to the sheet, including orders that need review. |
+| **Send reply?** | Skips sending when there is no reply address or the request has `dry_run: true` (test mode). |
+| **Status = ok?** | Routes to the confirmation e-mail or the missing-data e-mail. |
+| **Email: confirmation / ask for missing data** | Send the reply through Gmail SMTP. |
+| **From webhook?** + **Respond to Webhook** | Returns the result as JSON when the order came in through the API. |
 
-Kod obu węzłów Code jest w `src/` i ma testy jednostkowe. `scripts/build-workflow.js` wkleja ten sam kod do `workflow.json`, więc to, co jest testowane, jest tym, co działa w n8n.
+The code for both Code nodes lives in `src/` and has unit tests. `scripts/build-workflow.js` injects the same code into `workflow.json`, so what is tested is exactly what runs in n8n.
 
-### Odpowiedź API
+### API response
 
 ```bash
 curl -X POST http://localhost:5678/webhook/order \
@@ -72,17 +73,17 @@ curl -X POST http://localhost:5678/webhook/order \
 }
 ```
 
-Możliwe wartości w `issues`: `not_an_order`, `delivery_date_in_past`, `delivery_date_invalid`, `email_invalid_format`, `items[N].quantity_not_positive_integer`, `llm_invalid_json`, `llm_empty_response`, `llm_request_failed`.
+Possible values in `issues`: `not_an_order`, `delivery_date_in_past`, `delivery_date_invalid`, `email_invalid_format`, `items[N].quantity_not_positive_integer`, `llm_invalid_json`, `llm_empty_response`, `llm_request_failed`.
 
 ---
 
-## Wyniki testów
+## Test results
 
-10 przykładowych maili w `samples/` (6 poprawnych, w tym jeden po angielsku, 2 bez ilości lub daty, 1 z literówkami, 1 niebędący zamówieniem). Oczekiwane wyniki są w `samples/expected.json`, a skrypt `npm run eval` wysyła wszystkie maile na webhook i porównuje wyniki.
+10 sample e-mails in `samples/`: 6 valid orders (one of them in English), 2 missing a quantity or date, 1 with typos, and 1 that isn't an order. The expected results are in `samples/expected.json`. The `npm run eval` script sends every e-mail to the webhook and compares the results.
 
-Wynik: **10/10** przypadków zgodnych z oczekiwaniami (2026-11-23).
+Result: **10/10** cases matched expectations (2026-11-23).
 
-| Mail | Oczekiwany status | Otrzymany status | Pozycji | Braki / problemy | Wynik |
+| E-mail | Expected status | Actual status | Items | Missing / issues | Result |
 |---|---|---|---|---|---|
 | 01_ok_formal.txt | ok | ok | 3 | - | ✅ |
 | 02_ok_casual.txt | ok | ok | 2 | - | ✅ |
@@ -95,15 +96,15 @@ Wynik: **10/10** przypadków zgodnych z oczekiwaniami (2026-11-23).
 | 09_ok_typos.txt | ok | ok | 2 | - | ✅ |
 | 10_not_an_order.txt | needs_review | needs_review | 0 | not_an_order | ✅ |
 
-W pierwszym przebiegu (9/10) jedno zapytanie do Gemini (`02_ok_casual.txt`, data względna „na przyszły piątek”) przekroczyło limit 30 s. Workflow nie przerwał działania: trzy razy ponowił próbę, a potem oznaczył zamówienie statusem `needs_review` z powodem `llm_request_failed`. Po tym limit czasu w węźle HTTP Request został podniesiony do 60 s.
+In the first run (9/10), one Gemini request (`02_ok_casual.txt`, with the relative date "next Friday") hit the 30-second timeout. The workflow kept running: it retried three times, then marked the order `needs_review` with the reason `llm_request_failed`. After that, the HTTP Request timeout was raised to 60 seconds.
 
-Do tego 15 testów jednostkowych walidacji (`npm test`), w tym: brak odpowiedzi na adresy no-reply, zepsuty JSON z modelu, odpowiedź w bloku Markdown, błąd HTTP, data 30 lutego, ilość ujemna i ułamkowa.
+There are also 15 unit tests for the validation code (`npm test`), covering cases such as: no replies to no-reply addresses, broken JSON from the model, a response wrapped in a Markdown code block, HTTP errors, February 30th, and negative or fractional quantities.
 
-![Arkusz z wynikami](docs/sheet.png)
+![Sheet with results](docs/sheet.png)
 
 ---
 
-## Uruchomienie
+## Setup
 
 ### 1. n8n
 
@@ -111,65 +112,65 @@ Do tego 15 testów jednostkowych walidacji (`npm test`), w tym: brak odpowiedzi 
 docker compose up -d
 ```
 
-Otwórz `http://localhost:5678` i załóż konto lokalne. W menu workflow wybierz **Import from File** i wskaż `workflow.json`.
+Open `http://localhost:5678` and create a local account. Create a new workflow, open the **…** menu and choose **Import from File**, then select `workflow.json`.
 
 ### 2. Credentials
 
-| Credential | Typ w n8n | Ustawienia |
+| Credential | Type in n8n | Settings |
 |---|---|---|
-| Gemini API key | Header Auth | Name: `x-goog-api-key`, Value: klucz z [Google AI Studio](https://aistudio.google.com/apikey) |
-| Skrzynka testowa (odbiór) | IMAP | `imap.gmail.com`, port 993, SSL, użytkownik = adres Gmail, hasło = **hasło aplikacji** |
-| Skrzynka testowa (wysyłka) | SMTP | `smtp.gmail.com`, port 465, SSL, to samo hasło aplikacji |
-| Google Sheets | Google Sheets OAuth2 | według [instrukcji n8n](https://docs.n8n.io/integrations/builtin/credentials/google/oauth-single-service/) |
+| Gemini API key | Header Auth | Name: `x-goog-api-key`, Value: key from [Google AI Studio](https://aistudio.google.com/apikey) |
+| Test inbox (receiving) | IMAP | `imap.gmail.com`, port 993, SSL, user = Gmail address, password = **app password** |
+| Test inbox (sending) | SMTP | `smtp.gmail.com`, port 465, SSL, same app password |
+| Google Sheets | Google Sheets OAuth2 | see the [n8n guide](https://docs.n8n.io/integrations/builtin/credentials/google/oauth-single-service/) |
 
-Hasło aplikacji: na testowym koncie Gmail włącz weryfikację dwuetapową, potem Konto Google → Bezpieczeństwo → Hasła aplikacji.
+App password: enable 2-Step Verification on the test Gmail account, then go to Google Account → Security → App passwords.
 
-Po przypisaniu credentials:
-- w obu węzłach **Email: …** wpisz swój adres testowy w polu *From Email*;
-- w węźle **Google Sheets: append** wskaż arkusz i zakładkę.
+After assigning credentials:
+- in both **Email: …** nodes, enter your test address in the *From Email* field;
+- in the **Google Sheets: append** node, pick the spreadsheet and sheet, and keep *Mapping Column Mode* set to **Map Automatically**.
 
-### 3. Arkusz
+### 3. Spreadsheet
 
-Pierwszy wiersz arkusza musi zawierać nagłówki:
+The first row of the sheet must contain these headers:
 
 ```
 received_at | source | status | customer | email | items | delivery_date | notes | missing_fields | issues | subject
 ```
 
-### 4. Aktywacja i test
+### 4. Publish and test
 
-Aktywuj workflow (przełącznik w prawym górnym rogu), potem:
+Click **Publish** in the top-right corner of the editor (in n8n 2.x this replaces the old *Active* toggle). Then run:
 
 ```bash
-npm test        # testy jednostkowe walidacji, bez n8n
-npm run eval    # 10 maili przez webhook, wynik w results/eval-results.md
+npm test        # validation unit tests, no n8n needed
+npm run eval    # 10 e-mails through the webhook, results in results/eval-results.md
 ```
 
-`npm run eval` domyślnie wysyła `dry_run: true`, więc zamówienia trafiają do arkusza, ale maile do (fikcyjnych) klientów nie są wysyłane. Żeby przetestować prawdziwe maile, wyślij wiadomość na skrzynkę testową z innego konta.
+`npm run eval` sends `dry_run: true` by default, so orders are written to the sheet, but no e-mails go out to the (fictional) customers. To test real e-mails, send a message to the test inbox from another account.
 
-Model ustawiasz w `src/normalize.js` (`GEMINI_MODEL`, domyślnie alias `gemini-flash-latest`). Po zmianie uruchom `npm run build` i zaimportuj workflow ponownie.
+The model is set in `src/normalize.js` (`GEMINI_MODEL`, the `gemini-flash-latest` alias by default). After changing it, run `npm run build` and import the workflow again.
 
 ---
 
-## Ograniczenia
+## Limitations
 
-- **Zgodność danych z katalogiem.** System nie sprawdza, czy produkt istnieje w ofercie ani czy jest na stanie. Następny krok to wyszukanie produktu w bazie lub API magazynu przed potwierdzeniem.
-- **Webhook nie ma uwierzytelnienia.** Wystarcza lokalnie. Przed wystawieniem na zewnątrz trzeba dodać Header Auth w węźle Webhook.
-- **Odpowiedź klienta na prośbę o dane** trafia jako nowy mail i jest przetwarzana od zera, bez łączenia z pierwotnym zamówieniem.
-- **Załączniki** (np. zamówienie w PDF lub Excelu) nie są czytane.
-- **Model może się pomylić** przy nietypowych sformułowaniach, np. pomylić jednostkę z ilością. Walidacja wyłapuje błędy formalne, ale nie każdy błąd merytoryczny, dlatego potwierdzenie wysyłane do klienta zawiera pełną listę pozycji do sprawdzenia.
-- Jeśli zapis do Google Sheets się nie powiedzie, wykonanie kończy się błędem widocznym w zakładce *Executions*, a zapytanie z webhooka dostaje błąd zamiast odpowiedzi.
+- **No catalogue check.** The system doesn't verify that a product exists or is in stock. The next step would be looking up each product in a product database or warehouse API before confirming.
+- **The webhook has no authentication.** That's fine locally. Before exposing it publicly, add Header Auth to the Webhook node.
+- **A customer's reply with the missing data** arrives as a new e-mail and is processed from scratch, without being linked to the original order.
+- **Attachments** (e.g. an order sent as a PDF or Excel file) are not read.
+- **The model can make mistakes** with unusual wording, e.g. confusing a unit with a quantity. Validation catches formal errors but not every factual one, which is why the confirmation sent to the customer includes the full item list for them to check.
+- If writing to Google Sheets fails, the execution ends with an error visible in the *Executions* tab, and a webhook request gets an error instead of a response.
 
-## Struktura repozytorium
+## Repository structure
 
 ```
-workflow.json            eksport workflow do zaimportowania w n8n
-docker-compose.yml       uruchomienie n8n
-src/normalize.js         kod węzła "Normalize input"
-src/validate.js          kod węzła "Validate order"
-scripts/build-workflow.js  składa workflow.json z src/
-scripts/run-eval.js      ewaluacja na 10 przykładowych mailach
-tests/                   testy jednostkowe (node --test)
-samples/                 przykładowe maile + oczekiwane wyniki
-docs/                    zrzuty ekranu
+workflow.json              workflow export to import into n8n
+docker-compose.yml         runs n8n
+src/normalize.js           code of the "Normalize input" node
+src/validate.js            code of the "Validate order" node
+scripts/build-workflow.js  builds workflow.json from src/
+scripts/run-eval.js        evaluation on the 10 sample e-mails
+tests/                     unit tests (node --test)
+samples/                   sample e-mails + expected results
+docs/                      screenshots
 ```

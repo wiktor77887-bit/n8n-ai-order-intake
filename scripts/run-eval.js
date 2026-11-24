@@ -1,8 +1,8 @@
-// Ewaluacja: wysyła wszystkie maile z samples/ na webhook i porównuje wynik z samples/expected.json.
-// Uruchom (workflow musi być aktywny w n8n):
+// Evaluation: sends every e-mail from samples/ to the webhook and compares the result with samples/expected.json.
+// Run (the workflow must be published in n8n):
 //   node scripts/run-eval.js
-//   WEBHOOK_URL=http://localhost:5678/webhook-test/order node scripts/run-eval.js   (tryb testowy w edytorze)
-// Domyślnie dry_run=true: zamówienia trafiają do arkusza, ale maile do klientów NIE są wysyłane.
+//   WEBHOOK_URL=http://localhost:5678/webhook-test/order node scripts/run-eval.js   (editor test mode)
+// dry_run=true by default: orders are written to the sheet, but NO e-mails are sent to customers.
 const fs = require('fs');
 const path = require('path');
 
@@ -23,11 +23,11 @@ function parseSample(raw) {
 
 function check(exp, res) {
   const problems = [];
-  if (res.status !== exp.status) problems.push(`status ${res.status} (oczekiwano ${exp.status})`);
-  if (exp.items !== undefined && (res.order?.items?.length ?? 0) !== exp.items) problems.push(`pozycji ${res.order?.items?.length ?? 0} (oczekiwano ${exp.items})`);
-  if (exp.missing && !res.missing_fields?.includes(exp.missing)) problems.push(`brak "${exp.missing}" w missing_fields`);
-  if (exp.issue && !res.issues?.includes(exp.issue)) problems.push(`brak "${exp.issue}" w issues`);
-  if (exp.email && res.order?.email !== exp.email) problems.push(`email ${res.order?.email} (oczekiwano ${exp.email})`);
+  if (res.status !== exp.status) problems.push(`status ${res.status} (expected ${exp.status})`);
+  if (exp.items !== undefined && (res.order?.items?.length ?? 0) !== exp.items) problems.push(`items ${res.order?.items?.length ?? 0} (expected ${exp.items})`);
+  if (exp.missing && !res.missing_fields?.includes(exp.missing)) problems.push(`"${exp.missing}" not in missing_fields`);
+  if (exp.issue && !res.issues?.includes(exp.issue)) problems.push(`"${exp.issue}" not in issues`);
+  if (exp.email && res.order?.email !== exp.email) problems.push(`email ${res.order?.email} (expected ${exp.email})`);
   return problems;
 }
 
@@ -47,7 +47,7 @@ function check(exp, res) {
       problems = check(expected[file], res);
     } catch (e) {
       res = {};
-      problems = [`błąd wywołania: ${e.message}`];
+      problems = [`request failed: ${e.message}`];
     }
     const row = {
       file,
@@ -65,9 +65,9 @@ function check(exp, res) {
 
   const passed = rows.filter((r) => r.pass).length;
   const md = [
-    `Wynik: **${passed}/${rows.length}** przypadków zgodnych z oczekiwaniami (${new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Warsaw' })}).`,
+    `Result: **${passed}/${rows.length}** cases matched expectations (${new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Warsaw' })}).`,
     '',
-    '| Mail | Oczekiwany status | Otrzymany status | Pozycji | Braki / problemy | Wynik |',
+    '| E-mail | Expected status | Actual status | Items | Missing / issues | Result |',
     '|---|---|---|---|---|---|',
     ...rows.map((r) => `| ${r.file} | ${r.expected} | ${r.got} | ${r.items} | ${r.details} | ${r.pass ? '✅' : '❌ ' + r.problems.join('; ')} |`),
     '',
@@ -76,6 +76,6 @@ function check(exp, res) {
   fs.mkdirSync(path.join(root, 'results'), { recursive: true });
   fs.writeFileSync(path.join(root, 'results', 'eval-results.md'), md);
   fs.writeFileSync(path.join(root, 'results', 'eval-results.json'), JSON.stringify(rows, null, 2) + '\n');
-  console.log(`\n${passed}/${rows.length} PASS. Tabela zapisana w results/eval-results.md (wklej ją do README).`);
+  console.log(`\n${passed}/${rows.length} PASS. Table saved to results/eval-results.md (paste it into the README).`);
   process.exit(passed === rows.length ? 0 : 1);
 })();
